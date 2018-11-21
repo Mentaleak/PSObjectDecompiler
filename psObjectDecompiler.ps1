@@ -1,18 +1,47 @@
 ﻿
+$Global:TA=@()
+
+
+#Enhancement Verify Object creation in original build
+#Enhancement ignore default values
+
+
 
 
 function convert-ObjectToCode () {
 	param(
 		[Parameter(mandatory = $true)] $Object,
-		[string]$VarName,
-		[switch]$recursion
+		[Parameter(mandatory = $true)][string]$VarName,
+		[bool]$recursion
 	)
 
-	$codeString = "`$$($VarName)= New-Object $($object.GetType().toString()) `n"
+    if($($object.GetType().toString()) -eq "System.RuntimeType" -and $($object.fullname) ){
+	    $codeString = "`$$($VarName)= New-Object $($object.fullname) `n"
+           # write-host "$VarName ::::::::::::: $($object.fullname) "
+    }
+    else{
+        $codeString = "`$$($VarName)= New-Object $($object.gettype().FullName) `n"
+    }
+
+
 	foreach ($prop in (Get-ObjectProperties $Object)) {
-		if ((($object. "$($prop.name)".GetType()).IsPrimitive)) {
-			switch ($object. "$($prop.name)".GetType().Name) {
-				{ ($_ -eq "double") -or ($_ -match "int") } {
+		if ((($object."$($prop.name)".GetType()).IsPrimitive) -or ($object."$($prop.name)".GetType().name) -eq "string") {
+			
+            switch ($object. "$($prop.name)".GetType().Name) {
+				double{
+                    if($($object."$($prop.name)".toString()) -eq "∞"){
+                        $codeString += "`$$($VarName).$($prop.name)= [double]::PositiveInfinity `n"
+
+                    }
+                    elseif($($object."$($prop.name)".toString()) -eq "NaN") {
+                    $codeString += "`$$($VarName).$($prop.name)= [Double]::NAN `n"
+
+                    }
+                    else{
+                      $codeString += "`$$($VarName).$($prop.name)= $($object."$($prop.name)") `n"
+                      }
+                }
+                 {($_ -match "int" -or $_ -match "single") } {
 					$codeString += "`$$($VarName).$($prop.name)= $($object."$($prop.name)") `n"
 				}
 				{ ($_ -match "bool") } {
@@ -21,17 +50,24 @@ function convert-ObjectToCode () {
 				String {
 					$codeString += "`$$($VarName).$($prop.name)= `"$($object."$($prop.name)")`" `n"
 				}
+                byte{
+                     $codeString += "`$$($VarName).$($prop.name)= $($object."$($prop.name)") `n"
+                }
 				default {
 					$codeString += "`$$($VarName).$($prop.name)= $($object."$($prop.name)") `n"
-					Write-Host "$($prop.name) $($object."$($prop.name)".gettype().name)"
+					Write-Host ":::: `$$($VarName).$($prop.name)= $($object."$($prop.name)") `n $($object."$($prop.name)".gettype().name)"
 				}
 
 			}
 		}
-		elseif ($recursion) {
-			Write-Host "$($prop.name) $($object."$($prop.name)".gettype().name)"
+		elseif ($recursion -and $($prop.name) -notmatch "parent" ) {
+			$codeString+=convert-ObjectToCode -Object $object."$($prop.name)" -VarName "$($VarName)_$($prop.name)" -recursion $recursion
+            #Write-Host "$($VarName)_$($prop.name) $($object."$($prop.name)".gettype().name)"  
+
 		}
+
 	}
+
 	return $codeString
 }
 
@@ -45,8 +81,91 @@ function Get-ObjectProperties () {
 
 
 
-$codestr = convert-ObjectToCode -Object $form -VarName "MYTEST" -recursion
-#Invoke-Expression $codestr
+
+function Test-ObjectDebugger(){
+    param(
+        [Parameter(mandatory = $true)] $Object,
+        [Parameter(mandatory = $true)][string]$VarName,
+		[switch]$recursion
+    )
+    $codestr = convert-ObjectToCode -Object $Object -VarName "$VarName" -recursion $recursion
+    $errorfound=$true
+    $unresolvedErrors=
+    while($errorfound)
+    {
+    $codeStr_Error=$null
+    $errorfound=$false
+        try{ Invoke-Expression $codestr -ErrorVariable "codeStr_Error"}
+        catch{$errorfound=$true}
+    $CurrentError=$codeStr_Error[0]
+    Add-Member -InputObject $CurrentError -MemberType NoteProperty -Name "ConstructorName" -Value "$(($CurrentError.message -split "type ")[1].TrimEnd('.'))"
+    Add-Member -InputObject $CurrentError -MemberType NoteProperty -Name "ScriptLine" -Value ($CurrentError.ErrorRecord.ScriptStackTrace.Split("`n")[0] -split "line ")[1]
+
+    $codestr.Split("`n")[($CurrentError.ScriptLine-1)]
+    $constructorOptions= get-constructors -typename $($CurrentError.ConstructorName) 
+        if($constructorOptions[0].name -like "Error_*"){
+            $ChooseConstructor = [System.Windows.MessageBox]::Show("A constructor must be chosen for type: `n `n $($CurrentError.ConstructorName)
+            `n`n Unfortunately one cannot be determined it will have to be manually handled. GOOD LUCK!",'Choose Constructor','ok','ERROR')
+            $unresolvedErrors=
+        }else{
+            $ChooseConstructor = [System.Windows.MessageBox]::Show("A constructor must be chosen for type: `n `n $($CurrentError.ConstructorName)",'Choose Constructor','ok','Information')
+            $ChosenConstructor = $constructorOptions |Out-GridView 
+        }
+    }
+
+    
+    $UniqueCodeErrors = $codeStr_Errors.message |sort |get-unique
+    $constructorErrors= $codeStr_Errors | Where-Object {$_.message -match "A constructor was not found"}
+    $constructorErrors | foreach {
+    Add-Member -InputObject $_ -MemberType NoteProperty -Name "ConstructorName" -Value "$(($_.message -split "type ")[1].TrimEnd('.'))"
+    Add-Member -InputObject $_ -MemberType NoteProperty -Name "ScriptLine" -Value ($_.ErrorRecord.ScriptStackTrace.Split("`n")[0] -split "line ")[1]
+    }
+
+    $UniqueConstructorErrors = ($UniqueCodeErrors -match "A constructor was not found")
+    $ConstructorErrorList=@()
+    $constructorErrors |foreach{
+    #write-host "$(($_.message -split "type ")[1].TrimEnd('.'))   :::::::::::::: $($_.message)"  
+    get-constructors -typename "$(($_.message -split "type ")[1].TrimEnd('.'))"
+    }
+
+
+}
+
+
+function get-constructors(){
+param(
+        [Parameter(mandatory = $true)][string]$TypeName
+)
+Write-Host $TypeName
+    $constructorsData=@()
+    $constructors=([type]"$($TypeName)").DeclaredConstructors |Where-Object {$_.customAttributes.attributetype.name -ne "ObsoleteAttribute"}
+    
+    if($constructors){
+    $constructors | ForEach {
+        $constructor= [pscustomobject]@{
+            name = "$($TypeName)_Ctor_$($_.MetadataToken)"
+            parameters=($_.GetParameters() |select Name).name -join ", "
+            parameterData=($_.GetParameters())
+        }
+            $constructorsData+=$constructor
+            }
+     }
+     else{
+        $constructor= [pscustomobject]@{
+            name = "Error_$($TypeName)"
+            parameters=$null
+            parameterData=$null
+        }
+            $constructorsData+=$constructor
+     }
+            return $constructorsData
+}
+
+
+
+Test-ObjectDebugger -Object $form -VarName "MYTEST"
+
+#>
 #$MyTest.ShowDialog()
 
 
@@ -54,3 +173,5 @@ $codestr = convert-ObjectToCode -Object $form -VarName "MYTEST" -recursion
 #$objectType = $form.GetType().toString()
 #$DString="`$testForm= New-Object $($objectType)"
 #Invoke-Expression $DString
+
+
