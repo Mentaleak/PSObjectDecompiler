@@ -1,5 +1,5 @@
 ﻿
-$Global:TA=@()
+#$Global:TA=@()
 
 
 #Enhancement Verify Object creation in original build
@@ -163,7 +163,7 @@ Write-Host $TypeName
 
 
 
-Test-ObjectDebugger -Object $form -VarName "MYTEST"
+#Test-ObjectDebugger -Object $form -VarName "MYTEST"
 
 #>
 #$MyTest.ShowDialog()
