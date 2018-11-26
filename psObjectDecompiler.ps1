@@ -12,7 +12,8 @@ function convert-ObjectToCode () {
 	param(
 		[Parameter(mandatory = $true)] $Object,
 		[Parameter(mandatory = $true)] [string]$VarName,
-		[bool]$recursion
+		[bool]$recursion,
+		[switch]$ignoreDefault
 	)
 
 	if ($($object.GetType().ToString()) -eq "System.RuntimeType" -and $($object.FullName)) {
@@ -91,41 +92,58 @@ function Test-ObjectDebugger () {
 	$codestr = convert-ObjectToCode -Object $Object -VarName "$VarName" -recursion $recursion
 	$errorfound = $true
 	$unresolvedErrors = @()
-	while ($errorfound)
+	Invoke-Expression $codestr -ErrorVariable "codeStr_Errors"
+
+
+
+	<#while ($errorfound)
 	{
 		$codeStr_Error = $null
 		$errorfound = $false
 		try { Invoke-Expression $codestr -ErrorVariable "codeStr_Error" }
-		catch { $errorfound = $true }
-		$CurrentError = $codeStr_Error[0]
-		Add-Member -InputObject $CurrentError -MemberType NoteProperty -Name "ConstructorName" -Value "$(($CurrentError.message -split "type ")[1].TrimEnd('.'))"
-		Add-Member -InputObject $CurrentError -MemberType NoteProperty -Name "LineNumber" -Value ($CurrentError.ErrorRecord.ScriptStackTrace.Split("`n")[0] -split "line ")[1]
-		Add-Member -InputObject $CurrentError -MemberType NoteProperty -Name "LineCode" -Value ($codestr.Split("`n")[($CurrentError.ScriptLine - 1)])
+		catch { if( $codeStr_Error[0].Exception.message -match "A constructor was not found"){$constructorError = $true };$errorfound = $true}
+        if($constructorError){
+            $codeStr_Error[0]
+		    $CurrentError = $codeStr_Error[0]
+
+		    Add-Member -InputObject $CurrentError -MemberType NoteProperty -Name "ConstructorName" -Value "$(($CurrentError.exception.message -split "type ")[1].TrimEnd('.'))"
+		    Add-Member -InputObject $CurrentError -MemberType NoteProperty -Name "LineNumber" -Value ($CurrentError.exception.ErrorRecord.ScriptStackTrace.Split("`n")[0] -split "line ")[1]
+		    Add-Member -InputObject $CurrentError -MemberType NoteProperty -Name "LineCode" -Value ($codestr.Split("`n")[($CurrentError.ScriptLine - 1)])
 
 
-		$constructorOptions = get-constructors -TypeName $($CurrentError.ConstructorName)
-		if ($constructorOptions[0].Name -like "Error_*") {
-			$ChooseConstructor = [System.Windows.MessageBox]::Show("A constructor must be chosen for type: `n `n $($CurrentError.ConstructorName) `n`n Unfortunately one cannot be determined it will have to be manually handled. GOOD LUCK!",'Choose Constructor','ok','ERROR')
-			$unresolvedErrors += $CurrentError
-		} else {
-			$ChooseConstructor = [System.Windows.MessageBox]::Show("A constructor must be chosen for type: `n `n $($CurrentError.ConstructorName)",'Choose Constructor','ok','Information')
-			$ChosenConstructor = $constructorOptions | Out-GridView
-		}
+		    $constructorOptions = get-constructors -TypeName $($CurrentError.ConstructorName)
+		    if ($constructorOptions[0].Name -like "Error_*") {
+			    $ChooseConstructor = [System.Windows.MessageBox]::Show("A constructor must be chosen for type: `n `n $($CurrentError.ConstructorName) `n`n Unfortunately one cannot be determined it will have to be manually handled. GOOD LUCK!",'Choose Constructor','ok','ERROR')
+			    $unresolvedErrors += $CurrentError
+		    } else {
+			    $ChooseConstructor = [System.Windows.MessageBox]::Show("A constructor must be chosen for type: `n `n $($CurrentError.ConstructorName)",'Choose Constructor','ok','Information')
+			    $ChosenConstructor = $constructorOptions | Out-GridView
+		    }
+        }
 	}
-
+#>
 
 	$UniqueCodeErrors = $codeStr_Errors.message | sort | Get-Unique
 	$constructorErrors = $codeStr_Errors | Where-Object { $_.message -match "A constructor was not found" }
 	$constructorErrors | ForEach-Object {
 		Add-Member -InputObject $_ -MemberType NoteProperty -Name "ConstructorName" -Value "$(($_.message -split "type ")[1].TrimEnd('.'))"
-		Add-Member -InputObject $_ -MemberType NoteProperty -Name "ScriptLine" -Value ($_.ErrorRecord.ScriptStackTrace.Split("`n")[0] -split "line ")[1]
+		Add-Member -InputObject $_ -MemberType NoteProperty -Name "LineNumber" -Value ($_.ErrorRecord.ScriptStackTrace.Split("`n")[0] -split "line ")[1]
+		Add-Member -InputObject $_ -MemberType NoteProperty -Name "LineCode" -Value ($codestr.Split("`n")[($_.ScriptLine - 1)])
 	}
 
 	$UniqueConstructorErrors = ($UniqueCodeErrors -match "A constructor was not found")
 	$ConstructorErrorList = @()
 	$constructorErrors | ForEach-Object {
 		#write-host "$(($_.message -split "type ")[1].TrimEnd('.'))   :::::::::::::: $($_.message)"  
-		get-constructors -TypeName "$(($_.message -split "type ")[1].TrimEnd('.'))"
+
+		$constructorOptions = get-constructors -TypeName $($_.ConstructorName)
+		if ($constructorOptions[0].Name -like "Error_*") {
+			$ChooseConstructor = [System.Windows.MessageBox]::Show("A constructor must be chosen for type: `n `n $($_.ConstructorName) `n`n Unfortunately one cannot be determined it will have to be manually handled. GOOD LUCK!",'Choose Constructor','ok','ERROR')
+			$unresolvedErrors += $CurrentError
+		} else {
+			$ChooseConstructor = [System.Windows.MessageBox]::Show("A constructor must be chosen for type: `n `n $($_.ConstructorName)",'Choose Constructor','ok','Information')
+			$ChosenConstructor = $constructorOptions | Out-GridView
+		}
 	}
 
 
@@ -163,7 +181,7 @@ function get-constructors () {
 
 
 
-#Test-ObjectDebugger -Object $form -VarName "MYTEST"
+Test-ObjectDebugger -Object $form -VarName "MYTEST"
 
 #>
 #$MyTest.ShowDialog()
